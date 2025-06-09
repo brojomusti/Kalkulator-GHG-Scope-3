@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Scope 3 Emission Calculator</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> 
+  <!-- Chart.js Zoom Plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script> 
+  <!-- SheetJS for Excel -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script> 
+  <!-- PapaParse for CSV Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script> 
+  <!-- jsPDF for PDF Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script> 
+  <!-- html2canvas for screenshot -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script> 
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background-color: #f0fff0;
+    }
+    h1, h2 {
+      text-align: center;
+      color: #2c3e50;
+    }
+    .input-group {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+    }
+    label {
+      width: 70%;
+    }
+    input {
+      width: 25%;
+      padding: 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      background-color: #2d5d2c;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #results {
+      margin-top: 30px;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+    }
+    canvas {
+      max-width: 900px;
+      margin: 30px auto;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Scope 3 Emission Calculator</h1>
+<h2>Kelapa Sawit - Sektor Perkebunan & Pabrik</h2>
+
+<input type="file" id="excelFile" accept=".xlsx" />
+<button onclick="uploadExcel()">Muat Data dari Excel</button>
+
+<br/><br/>
+<form id="emissionForm"></form>
+
+<div id="results"></div>
+<canvas id="emissionChart"></canvas>
+
+<br/>
+<button onclick="toggleFullscreen()">Lihat Grafik Fullscreen</button>
+<button onclick="exportToCSV()">Ekspor ke CSV</button>
+<button onclick="exportToPDF()">Ekspor ke PDF</button>
+
+<script type="text/javascript">
+  const emissionFactors = {
+    category1: { label: "Kategori 1: Pembelian barang (ton pupuk NPK)", unit: "ton", factor: 1.8 },
+    category2: { label: "Kategori 2: Barang modal (ton alat/mesin)", unit: "ton", factor: 0.3 },
+    category3_diesel: { label: "Kategori 3: Solar / Diesel (liter)", unit: "liter", factor: 2.68 },
+    category3_electricity: { label: "Kategori 3: Listrik PLN (kWh)", unit: "kWh", factor: 0.8 },
+    category4_tbs_jumlah: { label: "Kategori 4: Jumlah TBS Dikirim (ton)", unit: "ton", factor: 0.12 },
+    category4_tbs_jarak: { label: "Kategori 4: Jarak Tempuh Pengiriman TBS (km)", unit: "km", factor: 1 },
+    category5_organic: { label: "Kategori 5: Limbah padat organik (ton)", unit: "ton", factor: 0.5 },
+    category5_liquid: { label: "Kategori 5: Limbah cair tanpa biogas (ton)", unit: "ton", factor: 50 },
+    category6_travel: { label: "Kategori 6: Kunjungan bisnis (km)", unit: "km", factor: 0.18 },
+    category7_commuting: { label: "Kategori 7: Transport pegawai harian (km)", unit: "km", factor: 0.12 },
+    category8_leased: { label: "Kategori 8: Aset sewa masuk (jam operasional)", unit: "jam", factor: 0.1 },
+    category9_cpo_jumlah: { label: "Kategori 9: Jumlah CPO Didistribusikan (ton)", unit: "ton", factor: 0.03 },
+    category9_cpo_jarak: { label: "Kategori 9: Jarak Tempuh Distribusi CPO (km)", unit: "km", factor: 1 },
+    category10_processing: { label: "Kategori 10: Pengolahan lanjut produk (ton)", unit: "ton", factor: 0.2 },
+    category11_use: { label: "Kategori 11: Penggunaan energi produk jadi (kWh)", unit: "kWh", factor: 0.4 },
+    category12_endlife: { label: "Kategori 12: Akhir hidup produk (ton)", unit: "ton", factor: 0.3 },
+    category13_leased: { label: "Kategori 13: Aset sewa keluar (jam operasional)", unit: "jam", factor: 0.09 },
+    category14_franchise: { label: "Kategori 14: Franchise (unit count)", unit: "unit", factor: 0.25 },
+    category15_investment: { label: "Kategori 15: Investasi (USD investasi)", unit: "USD", factor: 0.05 }
+  };
+
+  const form = document.getElementById('emissionForm');
+  const resultsDiv = document.getElementById('results');
+
+  function generateFormInputs() {
+    Object.keys(emissionFactors).forEach(key => {
+      const cat = emissionFactors[key];
+      const div = document.createElement('div');
+      div.className = 'input-group';
+      div.innerHTML = `<label>${cat.label} (${cat.unit})</label><input type="number" id="${key}" step="any" min="0" />`;
+      form.appendChild(div);
+    });
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Hitung Emisi';
+    button.onclick = calculateEmissions;
+    form.appendChild(button);
+  }
+
+  function uploadExcel() {
+    const fileInput = document.getElementById('excelFile');
+    const file = fileInput.files[0];
+    if (!file) return alert("Pilih file Excel terlebih dahulu.");
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+      const headers = jsonData[0];
+      const values = jsonData[1];
+
+      headers.forEach((header, index) => {
+        const input = document.getElementById(header);
+        if (input && values[index] !== undefined) {
+          input.value = values[index];
+        }
+      });
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function calculateEmissions() {
+    let total = 0;
+    const emissions = {};
+    const labels = [];
+    const values = [];
+
+    for (const key in emissionFactors) {
+      const input = parseFloat(document.getElementById(key).value) || 0;
+      const ef = emissionFactors[key].factor;
+      const co2e = input * ef;
+
+      emissions[key] = co2e;
+      total += co2e;
+
+      labels.push(key.replace('category', 'K'));
+      values.push(co2e.toFixed(2));
+    }
+
+    // Khusus Kategori 4 dan 9
+    const tbsJumlah = parseFloat(document.getElementById("category4_tbs_jumlah").value) || 0;
+    const tbsJarak = parseFloat(document.getElementById("category4_tbs_jarak").value) || 0;
+    const tbsEmisi = tbsJumlah * tbsJarak * 0.12;
+
+    const cpoJumlah = parseFloat(document.getElementById("category9_cpo_jumlah").value) || 0;
+    const cpoJarak = parseFloat(document.getElementById("category9_cpo_jarak").value) || 0;
+    const cpoEmisi = cpoJumlah * cpoJarak * 0.03;
+
+    emissions["Kategori 4: Angkutan TBS"] = tbsEmisi;
+    emissions["Kategori 9: Distribusi CPO"] = cpoEmisi;
+
+    total += tbsEmisi + cpoEmisi;
+
+    resultsDiv.innerHTML = `
+      <h2>Total Emisi CO₂e: ${total.toFixed(2)} kg</h2>
+      <ul>
+        ${Object.entries(emissions).map(([k, v]) => `<li>${k}: ${v.toFixed(2)} kg</li>`).join('')}
+      </ul>
+    `;
+
+    drawChart([...labels, "K4-TBS", "K9-CPO"], [...values, tbsEmisi.toFixed(2), cpoEmisi.toFixed(2)]);
+  }
+
+  function drawChart(labels, values) {
+    const ctx = document.getElementById('emissionChart').getContext('2d');
+    if (window.myChart) window.myChart.destroy();
+
+    window.myChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'CO₂e (kg)',
+          data: values,
+          backgroundColor: 'rgba(46, 164, 164, 0.6)',
+          borderColor: 'rgba(46, 164, 164, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          zoom: {
+            pan: { enabled: true, mode: 'x' },
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: 'x'
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'kgCO₂e' }
+          }
+        }
+      }
+    });
+  }
+
+  function toggleFullscreen() {
+    const chartCanvas = document.getElementById('emissionChart');
+    if (!document.fullscreenElement) {
+      chartCanvas.requestFullscreen().catch(err => {
+        alert(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  }
+
+  function exportToCSV() {
+    let data = {};
+    Object.keys(emissionFactors).forEach(key => {
+      const val = parseFloat(document.getElementById(key).value) || 0;
+      data[key] = val;
+    });
+
+    Papa.unparse([data], {
+      download: true,
+      filename: "scope3_input.csv"
+    });
+  }
+
+  async function exportToPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('p', 'mm', 'a4');
+
+    doc.setFontSize(16);
+    doc.text("Laporan Emisi Scope 3", 20, 20);
+
+    doc.setFontSize(10);
+    let y = 35;
+
+    Object.keys(emissionFactors).forEach(key => {
+      const label = emissionFactors[key].label;
+      const value = document.getElementById(key).value || "0";
+      doc.text(`${label}: ${value}`, 20, y);
+      y += 5;
+    });
+
+    const canvas = document.getElementById('emissionChart');
+    const canvasImage = await html2canvas(canvas);
+    const imgData = canvasImage.toDataURL('image/png');
+    doc.addPage();
+    doc.addImage(imgData, 'PNG', 15, 30, 180, 100);
+
+    doc.save("Scope3_Emission_Report.pdf");
+  }
+
+  generateFormInputs();
+</script>
+</body>
+</html>
